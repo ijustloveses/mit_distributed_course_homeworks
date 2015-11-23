@@ -13,10 +13,13 @@ type JobType string
 // RPC arguments and replies.  Field names must start with capital letters,
 // otherwise RPC will break.
 
+// 可以参考 mapreduce.go 中 DoMap & DoReduce 的参数，来对应下面的参数
 type DoJobArgs struct {
-	File          string
-	Operation     JobType
-	JobNumber     int // this job's number
+	File      string
+	Operation JobType // Map or Reduce
+	JobNumber int     // this job's number，这个不是总数，而是第几个
+	// map 任务需要知道 reduce 的总数，以便生成对应的文件
+	// reduce 任务需要知道 map 的总数，以便合并多个map生成的文件
 	NumOtherPhase int // total number of jobs in other phase (map or reduce)
 }
 

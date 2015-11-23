@@ -122,7 +122,9 @@ func port(suffix string) string {
 }
 
 func setup() *MapReduce {
+	// 该文件为 0 ~ 99999，每个数字一行
 	file := makeInput()
+	// UNIX-domain socket, instead of ip/port mode
 	master := port("master")
 	mr := MakeMapReduce(nMap, nReduce, file, master)
 	return mr

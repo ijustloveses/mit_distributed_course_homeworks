@@ -115,9 +115,11 @@ func (mr *MapReduce) StartRegistrationServer() {
 
 	// now that we are listening on the master address, can fork off
 	// accepting connections to another thread.
+	// 启动 goroutine 来处理接听
 	go func() {
 		for mr.alive {
 			conn, err := mr.l.Accept()
+			// 每接收到一个连接，就启动一个 goroutine 来处理
 			if err == nil {
 				go func() {
 					rpcs.ServeConn(conn)
