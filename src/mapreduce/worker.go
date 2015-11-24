@@ -37,7 +37,7 @@ func (wk *Worker) DoJob(arg *DoJobArgs, res *DoJobReply) error {
 // have processed.
 func (wk *Worker) Shutdown(args *ShutdownArgs, res *ShutdownReply) error {
 	DPrintf("Shutdown %s\n", wk.name)
-	res.Njobs = wk.nJobs
+	res.Njobs = wk.nJobs // 这里给 reply 设置 Njobs
 	res.OK = true
 	wk.nRPC = 1 // OK, because the same thread reads nRPC
 	wk.nJobs--  // Don't count the shutdown RPC

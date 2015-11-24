@@ -78,6 +78,7 @@ func InitMapReduce(nmap int, nreduce int,
 	mr.DoneChannel = make(chan bool)
 
 	// initialize any additional state here
+	mr.Workers = make(map[string]*WorkerInfo)
 	return mr
 }
 
@@ -93,6 +94,7 @@ func (mr *MapReduce) Register(args *RegisterArgs, res *RegisterReply) error {
 	DPrintf("Register: worker %s\n", args.Worker)
 	mr.registerChannel <- args.Worker
 	res.OK = true
+	mr.Workers[args.Worker] = &WorkerInfo{args.Worker}
 	return nil
 }
 
