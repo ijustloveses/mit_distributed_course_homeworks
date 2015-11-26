@@ -200,6 +200,7 @@ func Test1(t *testing.T) {
 		for i := 0; i < DeadPings*3; i++ {
 			v, _ := ck1.Ping(vy.Viewnum)
 			if v.Viewnum > vy.Viewnum {
+				t.Fatalf("[byme] why v.Viewnum level up again? it should keeps")
 				break
 			}
 			time.Sleep(PingInterval)

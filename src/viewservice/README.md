@@ -87,3 +87,63 @@ ViewServer 维护 mu Mutex, l Listener, dead 自身状态, rpccount 接收的 rp
 
 
 **test_test.go**
+先看一个基本的测试用例函数 check(ck, p, b, n):
+给定 ck Clerk 和 p Primary, b Backup 和 n Viewnum
+使用 ck 去发起 Get 请求， 得到 view，然后校验，确保：
+    view.Primary == p
+    view.Backup == b
+    view.Viewnum = n
+    ck.Primary() == p 也就是说再次发起一个 Get 请求，得到的仍然是 p
+
+测试流程如下：
+    使用 StartServe 创建 ViewServer，名为 v
+    使用 MakeClerk 创建 3 个 Clerks，名为 ck1，ck2，ck3
+
+    确保 ck1.Primary() 得到的不是 ""，也就是说 ck1 去 Get，此时 v 应该分配新的 Primary 了
+    然后以 PingInterval 为间隔多次用 ck1 Ping v，保证返回的 view.Primary 都是 ck1 自身
+    确保此时满足 check(ck1, ck1.me, "", 1)  即 Primary 为 ck1，Backup 为空，Viewnum 为 1
+
+    然后以 PingInterval 为间隔多次用 ck1 和 ck2 来 Ping，其中 ck1 使用自己的 viewnum 1 来 Ping(1)， ck2 使用 0 来 Ping(2)
+    确保此时返回的 view.Backup 已经设置为 ck2.me，并 check(ck1, ck1.me, ck2.me, 2)
+
+    然后 ck1 不再 Ping, ck2 保持 Ping(2)，并超过 DeadPing 倍时间间隔，于是 ck1 死亡
+    确保 check(ck2, ck2.me, "", 3) 也就是 ck2 成为 Primary，没有了 Backup，Viewnum 升到 3
+
+    然后 ck1 恢复 Ping(0)，ck2 也保持 Ping
+    确保 check(ck2, ck2.me, ck1.me, 4) 也就是 ck1成为 Backup，Viewnum 升级到 4
+
+    然后 ck2 死亡，ck3 加入
+    确保 check(ck1, ck1.me, ck3.me, 5) 也就是 ck1 成为 Primary，ck3成为 Backup
+
+    然后，ck1 和 ck3 保持 Ping，但是 ck1.Ping(0)，模拟在 DeadPing 间隔内重启的 case
+    但是此时仍然要更新 View，因为 ck1 没有保持其状态，其 viewnum 变量了 0
+    确保 Primary == ck3.me
+
+    然后只让 ck3 保持 Ping，也就是让 Primary = ck3.me, Backup = ""
+
+    然后恢复 ck1.Ping(0) 成为 Backup；注意，过程中先用 ck3.Ping，再用 ck1.Ping(0)
+    一旦发现 ck1.Ping 的结果是更新了View，退出循环，故此 ck3 不会再次 Ping
+    之后只用 ck1.Ping 不再用 ck3.Ping，就是说 ck3 仍然没有更新最新的 View
+    而由于 ck3 是之前的 Primary，我们设计为一旦当前的 Primary 没有更新最新的 view，那么就不更新, ck1 不会成为 Primary
+    于是，继续使用 ck1.Ping(新Viewnum) 超过 DeadPing 次
+    确保在 ViewServer 发现 ck3 死掉之后，再使用 ck2 发 Get 请求
+    于是，check(ck2, ck3.me, ck1.me, 之前版本的 Viewnum)
+    确保 ck3 仍然是 Primary, ck1仍然是 Backup, Viewnum 和 ck1 目前的一致
+    (如果 ck3 曾经更新过新版本，再死掉，那么 ck1 就会被提升为 Primary；然而 ck3 从未更新过)
+
+    最后，使用 ck1.Ping(v.Viewnum), ck2.Ping(0), ck3.Ping(Viewnum)
+    此时，由于 ViewServer 中维护的 Primary 是 ck3，故此复位，一切重回正常
+    而后，再让 ck1 & ck3 死掉，同时让 ck2.Ping(0)
+    和上一段类似，由于 Primary 已经死掉，无法接收 ack，故此 ViewServer 再度陷入混乱
+    ViewServer 保持原来的版本不动，ck2 不会提升为 Primary
+
+核心逻辑就是：ViewServer 维护 Server 的动态，调整 View
+但是这个调整后的 View 版本必须要通知 Primary 并得到确认才生效
+否则，ViewServer 就无法继续
+
+
+**server.go 实现**
+需要实现 Ping 接口，Get 接口
+需要实现 tick 函数，用于在每个 PingInterval 间隔里检查是否有服务器变动，并相应调整 View
+补全 StartServer 的框架
+
