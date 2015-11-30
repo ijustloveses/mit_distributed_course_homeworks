@@ -16,8 +16,8 @@ type ViewServer struct {
 	rpccount int32 // for testing
 	me       string
 
-
 	// Your declarations here.
+	v View // view (Primary/Backup/Viewnum)
 }
 
 //
@@ -26,6 +26,16 @@ type ViewServer struct {
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
 	// Your code here.
+	vs.mu.Lock()
+	if vs.v.Primary == "" {
+		vs.v.Primary = args.Me
+		vs.v.Viewnum++
+	} else if vs.v.Backup == "" {
+		vs.v.Backup = args.Me
+		vs.v.Viewnum++
+	}
+	reply.View = vs.v
+	vs.mu.Unlock()
 
 	return nil
 }
@@ -36,10 +46,10 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 
 	// Your code here.
+	reply.View = vs.v
 
 	return nil
 }
-
 
 //
 // tick() is called once per PingInterval; it should notice
@@ -77,6 +87,9 @@ func StartServer(me string) *ViewServer {
 	vs := new(ViewServer)
 	vs.me = me
 	// Your vs.* initializations here.
+	vs.v.Primary = ""
+	vs.v.Backup = ""
+	vs.v.Viewnum = 0
 
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()
