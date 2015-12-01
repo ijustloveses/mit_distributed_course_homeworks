@@ -17,7 +17,9 @@ type ViewServer struct {
 	me       string
 
 	// Your declarations here.
-	v View // view (Primary/Backup/Viewnum)
+	v      View  // view (Primary/Backup/Viewnum)
+	nv     View  // new view, view would change until Primary confirmed
+	pcount int32 // primary ping count
 }
 
 //
@@ -27,14 +29,30 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
 	// Your code here.
 	vs.mu.Lock()
-	if vs.v.Primary == "" {
-		vs.v.Primary = args.Me
-		vs.v.Viewnum++
-	} else if vs.v.Backup == "" {
-		vs.v.Backup = args.Me
-		vs.v.Viewnum++
+	if vs.v.Viewnum == vs.nv.Viewnum {
+		if vs.v.Primary == args.Me && vs.v.Viewnum == args.Viewnum {
+			vs.pcount = 0
+		} else if vs.v.Primary == args.Me && vs.v.Viewnum > args.Viewnum {
+			vs.pcount = DeadPings
+		}
+
+		if vs.nv.Primary == "" {
+			vs.nv.Primary = args.Me
+			vs.nv.Viewnum++
+		} else if vs.nv.Backup == "" && vs.nv.Primary != args.Me {
+			vs.nv.Backup = args.Me
+			vs.nv.Viewnum++
+		}
+		reply.View = vs.v
+	} else {
+		if vs.nv.Primary == args.Me {
+			vs.v = vs.nv
+			reply.View = vs.nv
+		} else {
+			reply.View = vs.v
+		}
 	}
-	reply.View = vs.v
+
 	vs.mu.Unlock()
 
 	return nil
@@ -59,6 +77,17 @@ func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 func (vs *ViewServer) tick() {
 
 	// Your code here.
+	vs.mu.Lock()
+	vs.pcount++
+	if vs.pcount >= DeadPings && vs.nv.Viewnum == vs.v.Viewnum {
+		vs.nv.Primary = ""
+		if vs.v.Backup != "" {
+			vs.nv.Primary = vs.v.Backup
+		}
+		vs.nv.Backup = ""
+		vs.nv.Viewnum++
+	}
+	vs.mu.Unlock()
 }
 
 //
@@ -90,6 +119,8 @@ func StartServer(me string) *ViewServer {
 	vs.v.Primary = ""
 	vs.v.Backup = ""
 	vs.v.Viewnum = 0
+	vs.nv = vs.v
+	vs.pcount = 0
 
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()

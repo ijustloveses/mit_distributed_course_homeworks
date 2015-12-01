@@ -5,7 +5,7 @@ http://nil.csail.mit.edu/6.824/2015/notes/l-rpc.txt
 http://nil.csail.mit.edu/6.824/2015/notes/l-rpc.go
 
 ###Lab2 overview
-**Design ideas**
+**Design ideas** one primary and one backup 
 In this lab you'll make a key/value service fault-tolerant using a form of primary/backup replication.
 In order to ensure that all parties (clients and servers) agree on which server is the primary, and which is the backup, we'll introduce a kind of master server, called the viewservice.
 The viewservice monitors whether each available server is alive or dead. If the current primary or backup becomes dead, the viewservice selects a server to replace it.
@@ -53,7 +53,7 @@ The *acknowledgement rule* corresponds the last point of the Drawback section, a
 定义失联间隔时间 DeadPings 为 5 个 PingInterval 即 500 ms
 PingArg: me 自身的 host/port + 所持有的 Viewnum，用于通知 ViewServer 自己仍然存活
 PingReply: View，用于 ViewServer 向请求方返回最新的 View
-GetArg: 无参数，用于 client 向 ViewServer 索求最新的 View
+GetArg: 无参数，用于 client 向 ViewServer 索求最新的 View，由于不会提供调用者信息，故此该接口不会更新 Primary/Backup 的设置
 GetReply: View，用于 ViewServer 向请求方返回最新的 View
 
 
