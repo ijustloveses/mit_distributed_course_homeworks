@@ -147,3 +147,65 @@ ViewServer 维护 mu Mutex, l Listener, dead 自身状态, rpccount 接收的 rp
 需要实现 tick 函数，用于在每个 PingInterval 间隔里检查是否有服务器变动，并相应调整 View
 补全 StartServer 的框架
 
+实现如下：
+ViewServer 维护以下内部成员变量
+    - view  -- 当前 View
+        - Primary
+        - Backup
+        - Viewnum
+    - primaryAck  -- Primary 服务器的 Viewnum
+    - primaryTick -- Primary 服务器的 Tick
+    - backupTick  -- Backup  服务器的 Tick
+    - currentTick -- ViewServer 自身的 Tick
+
+定义两个重要的概念
+    - Acked()  -- Primary_Ack == View.Viewnum
+          根据设计，后续的变更必须先等 Primary Acked 完毕
+    - PromoteBackup()
+        - view.Primary = view.Backup
+        - view.Backup = ""
+        - view.Viewnum ++
+        - primaryAck = 0
+        - primaryTick = backupTick
+          首先，view.Backup = ""，之后不再继续找空闲服务器来设置 Backup；
+          这是因为后面活跃的空闲服务器还是会 Ping 的，在 Ping 里面设置 Backup 即可，不必在这里
+          其次， **primaryAck = 0** 很重要，说明目前并不 Acked; 需要等 Primary 再用 View.Viewnum Ping 一次才能 Acked
+          最后，使用原 backupTick 来更新 primaryTick
+
+Get() 函数
+这个函数比较简单，直接 reply.View = vs.view 即可，不改变内部状态
+
+Tick() 函数
+ViewServer 自身的 currentTick ++，表示当前 Tick 数
+然后通过 currentTick 来检查 primaryTick && backupTick 是否超时
+如果 primaryTick 超时，且当前 Acked()，PromoteBackup()
+如果 backupTick 超时，且当前 Acked()，那么 Backup = "" && Viewnum ++
+这里要注意，都要确保 Acked 状态，否则不会发生内部状态变更
+
+Ping() 函数，最复杂和最核心的函数
+设 Ping 的发起者其名字为 name，其 Viewnum 为 num
+那么，**按先后顺序** 做一下 4 个情况的处理：
+    - 最优先处理初始情况：
+        - 不必考虑 Acked 的情况，直接让请求者为 Primary
+        - 提升 Viewnum = 1， 并更新 primaryTick 为 currentTick
+        - **让 primaryAck = 0**，也就是当前并不 Acked，直到某时刻 primaryTick 使用 1 来 Ping
+    - 如果是 Primary 来 Ping
+        - 如果 Primary 使用 0 来 Ping, 说明 Primary 重启状态，那么 PromoteBackup()
+          注意，因为是 Primary 的 Ping, 故此 Primary 只是落后了，而不是失联了；不判断 Acked 就可以提升
+        - 否则，更新 primaryAck 为 num，并更新 primaryTick
+    - 如果没有 Backup 且当前 Acked，注意 **优先级低于上面两个，故此 Ping 的发起者必然不是 Primary**
+        - 设来访者为 Backup
+    - 如果是 Backup 来 Ping
+        - 如果 num == 0 且 Acked, 说明 Backup 重启后重连，重新设置 Backup 一遍
+        - 否则，直接更新 backupTick 即可
+最后，设置 reply.View = vs.view 并返回
+注意，前两个 Case 要么是没有 Primary 要么是 Primary 重启后重连
+那么，这两个 Case 不需要判断 Acked
+其他的两个 Case 以及 Tick() 函数中的两个超时 Case，都需要判断 Acked，
+确保 Primary 和 ViewServer 同步后才能做后续更改；
+尤其注意，即使 Primary 失联，也要求失联前是同步的，否则系统不会改变
+
+以上三个函数都需要使用 mu.Lock && mu.Unlock 上锁和解锁
+
+以上的逻辑，是如何满足测试用例的，请参考 test_test.go
+

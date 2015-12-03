@@ -17,9 +17,48 @@ type ViewServer struct {
 	me       string
 
 	// Your declarations here.
-	v     View           // view (Primary/Backup/Viewnum)
-	nv    View           // new view, view would change until Primary confirmed
-	nodes map[string]int // a dict of servers that once connected viewserver
+	view        View //current view
+	primaryAck  uint
+	primaryTick uint
+	backupTick  uint
+	currentTick uint
+}
+
+//
+// utils
+//
+func (vs *ViewServer) Acked() bool {
+	return vs.view.Viewnum == vs.primaryAck // 和 Primary 同步，说明 Acked
+}
+
+func (vs *ViewServer) IsUninitialized() bool {
+	return vs.view.Viewnum == 0 && vs.view.Primary == ""
+}
+
+func (vs *ViewServer) HasPrimary() bool {
+	return vs.view.Primary != ""
+}
+
+func (vs *ViewServer) HasBackup() bool {
+	return vs.view.Backup != ""
+}
+
+func (vs *ViewServer) IsPrimary(name string) bool {
+	return vs.view.Primary == name
+}
+
+func (vs *ViewServer) IsBackup(name string) bool {
+	return vs.view.Backup == name
+}
+
+func (vs *ViewServer) PromoteBackup() {
+	if vs.HasBackup() {
+		vs.view.Primary = vs.view.Backup
+		vs.view.Backup = ""
+		vs.view.Viewnum++
+		vs.primaryAck = 0
+		vs.primaryTick = vs.backupTick
+	}
 }
 
 //
@@ -28,32 +67,38 @@ type ViewServer struct {
 func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 
 	// Your code here.
-	vs.mu.Lock()
-	if vs.v.Viewnum == vs.nv.Viewnum {
-		if vs.v.Primary == args.Me || vs.v.Backup == args.Me {
-			if vs.v.Viewnum == args.Viewnum {
-				vs.nodes[args.Me] = 0
-			} else {
-				vs.nodes[args.Me] = DeadPings
-			}
-		}
+	num := args.Viewnum
+	name := args.Me
 
-		if vs.nv.Primary == "" {
-			vs.nv.Primary = args.Me
-			vs.nv.Viewnum++
-		} else if vs.nv.Backup == "" && vs.nv.Primary != args.Me {
-			vs.nv.Backup = args.Me
-			vs.nv.Viewnum++
-		}
-		reply.View = vs.v
-	} else {
-		if vs.nv.Primary == args.Me {
-			vs.v = vs.nv
-			reply.View = vs.nv
+	vs.mu.Lock()
+
+	switch {
+	case vs.IsUninitialized():
+		vs.view.Primary = name
+		vs.view.Viewnum = 1
+		vs.primaryTick = vs.currentTick
+		vs.primaryAck = 0
+	case vs.IsPrimary(name):
+		if num == 0 {
+			vs.PromoteBackup()
 		} else {
-			reply.View = vs.v
+			vs.primaryAck = num
+			vs.primaryTick = vs.currentTick
+		}
+	case !vs.HasBackup() && vs.Acked():
+		vs.view.Backup = name
+		vs.view.Viewnum++
+		vs.backupTick = vs.currentTick
+	case vs.IsBackup(name):
+		if num == 0 && vs.Acked() {
+			vs.view.Backup = name
+			vs.view.Viewnum++
+			vs.backupTick = vs.currentTick
+		} else if num != 0 {
+			vs.backupTick = vs.currentTick
 		}
 	}
+	reply.View = vs.view
 
 	vs.mu.Unlock()
 
@@ -66,7 +111,9 @@ func (vs *ViewServer) Ping(args *PingArgs, reply *PingReply) error {
 func (vs *ViewServer) Get(args *GetArgs, reply *GetReply) error {
 
 	// Your code here.
-	reply.View = vs.v
+	vs.mu.Lock()
+	reply.View = vs.view
+	vs.mu.Unlock()
 
 	return nil
 }
@@ -80,40 +127,14 @@ func (vs *ViewServer) tick() {
 
 	// Your code here.
 	vs.mu.Lock()
-	for node, cnt := range vs.nodes {
-		vs.nodes[node] = cnt + 1
+	vs.currentTick++
+	// 看到只有满足 vs.Acked 才会更新 View
+	if vs.currentTick-vs.primaryTick >= DeadPings && vs.Acked() {
+		vs.PromoteBackup()
 	}
-
-	var viewchanged = 0
-
-	if vs.nodes[vs.v.Primary] >= DeadPings && vs.nv.Viewnum == vs.v.Viewnum {
-		vs.nv.Primary = ""
-		if vs.v.Backup != "" && vs.nodes[vs.v.Backup] < DeadPings {
-			vs.nv.Primary = vs.v.Backup
-		} else {
-			for node, cnt := range vs.nodes {
-				if node != vs.v.Primary && node != vs.v.Backup && cnt < DeadPings {
-					vs.nv.Primary = node
-					break
-				}
-			}
-		}
-		vs.nv.Backup = ""
-		viewchanged = 1
-	}
-
-	if vs.nv.Primary != "" && (vs.nv.Backup == "" || vs.nodes[vs.v.Backup] >= DeadPings) {
-		for node, cnt := range vs.nodes {
-			if node != vs.nv.Primary && cnt < DeadPings {
-				vs.nv.Backup = node
-				viewchanged = 1
-				break
-			}
-		}
-	}
-
-	if viewchanged == 1 {
-		vs.nv.Viewnum++
+	if vs.HasBackup() && vs.currentTick-vs.backupTick >= DeadPings && vs.Acked() {
+		vs.view.Backup = ""
+		vs.view.Viewnum++
 	}
 	vs.mu.Unlock()
 }
@@ -140,25 +161,14 @@ func (vs *ViewServer) GetRPCCount() int32 {
 	return atomic.LoadInt32(&vs.rpccount)
 }
 
-// for debug
-func (vs *ViewServer) debug() {
-	fmt.Printf("main primary: %s\n", vs.v.Primary)
-	fmt.Printf("main backup: %s\n", vs.v.Backup)
-	fmt.Printf("main viewnum: %d\n", vs.v.Viewnum)
-	fmt.Printf("new primary: %s\n", vs.nv.Primary)
-	fmt.Printf("new backup: %s\n", vs.nv.Backup)
-	fmt.Printf("new viewnum: %d\n", vs.nv.Viewnum)
-}
-
 func StartServer(me string) *ViewServer {
 	vs := new(ViewServer)
 	vs.me = me
 	// Your vs.* initializations here.
-	vs.v.Primary = ""
-	vs.v.Backup = ""
-	vs.v.Viewnum = 0
-	vs.nv = vs.v
-	vs.nodes = make(map[string]int)
+	vs.view = View{0, "", ""}
+	vs.primaryAck = 0
+	vs.primaryTick = 0
+	vs.backupTick = 0
 
 	// tell net/rpc about our RPC server and handlers.
 	rpcs := rpc.NewServer()

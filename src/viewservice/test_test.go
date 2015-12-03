@@ -126,6 +126,8 @@ func Test1(t *testing.T) {
 	{
 		// 这句只是为了得到当前的 Viewnum 版本号
 		vx, _ := ck2.Get()
+		// 这句让 Primary keep up with 当前的 Viewnum，或者说 viewserver 得到 ack
+		// 很重要，否则按设计，将无法通过测试
 		ck2.Ping(vx.Viewnum)
 		for i := 0; i < DeadPings*2; i++ {
 			ck3.Ping(0)
