@@ -207,5 +207,13 @@ Ping() 函数，最复杂和最核心的函数
 
 以上三个函数都需要使用 mu.Lock && mu.Unlock 上锁和解锁
 
-以上的逻辑，是如何满足测试用例的，请参考 test_test.go
+以上的逻辑，是如何满足测试用例的，请参考 test_test.go，而最重要的三个重点是：
+1. 每次做了变更之后，都会导致 primaryAck 和 view.Viewnum 不再相等， 也就是 Acked() 不再成立
+2. 每次 Ping 请求过来，参数中的 num 有三种可能：
+    - 0 说明发送者重启刚刚恢复
+    - 比 view.Viewnum 小，此时返回最新的 view，但是并不保证发送者下次会使用最新的 Viewnum 再次 Ping
+    - 和 view.Viewnum 一致，说明发送者 和 ViewServer 同步
+3. 目前版本 Ping 的发送者，也就是 ViewServer 的 client，并不维护 Viewnum，都是通过 test_test.go 也就是外部控制如何 Ping 的
+
+而后面的 Part B 我们会 focus 到 Ping 的发送者作为 server 的行为逻辑，以及它们的client (真正意义的 client) 又是如何调用的
 

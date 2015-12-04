@@ -161,6 +161,12 @@ func (vs *ViewServer) GetRPCCount() int32 {
 	return atomic.LoadInt32(&vs.rpccount)
 }
 
+// for debug
+func (vs *ViewServer) debug() {
+	fmt.Printf("p: %s   b: %s   n: %d \n", vs.view.Primary, vs.view.Backup, vs.view.Viewnum)
+	fmt.Printf("pAck: %d   pTick: %d   bTick: %d   cTick: %d\n", vs.primaryAck, vs.primaryTick, vs.backupTick, vs.currentTick)
+}
+
 func StartServer(me string) *ViewServer {
 	vs := new(ViewServer)
 	vs.me = me

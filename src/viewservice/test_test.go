@@ -280,13 +280,19 @@ func Test1(t *testing.T) {
 			ck3.Ping(v.Viewnum)
 			time.Sleep(PingInterval)
 		}
+		vs.debug()
 		// 此时 ViewServer 恢复为 Acked() 状态，ck1 是 Backup, ck3 是 Primary
 		for i := 0; i < DeadPings*2; i++ {
 			// 只让 ck2 Ping，也就是说让 ck1 & ck3 超时
 			ck2.Ping(0)
+			// case 1. Primary ck3 先超时，那么 PromoteBackup，于是 ck1 成为 Primary；问题是 ck1 也不连接，于是不会 Acked，僵死
+			// case 2. Backup ck1 先超时，这种情况会不容易发生，因为 server.go::Tick() 中先判断 Primary 在判断 Backup
+			// 于是，设置 Backup = ""，并把 view.Viewnum ++，于是比 Primary 高了，而 ck3 不会再连接，于是也不会 Acked，僵死
 			time.Sleep(PingInterval)
 		}
 		vz, _ := ck2.Get()
+		vs.debug()
+		// 这个用例说明，如果 Acked 的系统，且 Primary & Backup 都在，如果它们同时失联，那么系统一定僵死
 		if vz.Primary == ck2.me {
 			t.Fatalf("uninitialized backup promoted to primary")
 		}
